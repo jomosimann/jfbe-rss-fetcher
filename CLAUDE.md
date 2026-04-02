@@ -15,17 +15,17 @@ A private tool that monitors a configurable list of RSS news feeds once per week
 
 ## Tech Stack
 
-| Layer | Tool |
-|---|---|
-| Framework | Next.js 15 (App Router) |
-| Database + Auth | Supabase (Postgres + Supabase Auth) |
-| Styling | Tailwind CSS |
-| Hosting | Vercel (free tier) |
-| Scheduler | GitHub Actions (`schedule:`) |
-| Note | Next.js 15 uses async cookies/headers APIs — always await them |
-| RSS parsing | `rss-parser` (npm) |
-| Article extraction | `cheerio` (npm) |
-| AI scoring | Google Gemini 1.5 Flash API (free tier) |
+| Layer              | Tool                                                           |
+| ------------------ | -------------------------------------------------------------- |
+| Framework          | Next.js 15 (App Router)                                        |
+| Database + Auth    | Supabase (Postgres + Supabase Auth)                            |
+| Styling            | Tailwind CSS                                                   |
+| Hosting            | Vercel (free tier)                                             |
+| Scheduler          | GitHub Actions (`schedule:`)                                   |
+| Note               | Next.js 15 uses async cookies/headers APIs — always await them |
+| RSS parsing        | `rss-parser` (npm)                                             |
+| Article extraction | `cheerio` (npm)                                                |
+| AI scoring         | Google Gemini 1.5 Flash API (free tier)                        |
 
 ---
 
@@ -53,12 +53,14 @@ Admin reviews articles at /admin/articles
 ```
 
 ### Scheduling detail
+
 - GitHub Actions `schedule: cron: '0 7 * * 1'` (every Monday, 07:00 UTC)
 - Calls `POST /api/cron/rss` on the Vercel deployment
 - Route validates `Authorization: Bearer $CRON_SECRET` before running
 - GitHub Actions is used instead of Vercel Cron to stay on free tier
 
 ### Article fetching strategy
+
 1. Attempt full article fetch via `fetch()` + `cheerio` HTML parsing
 2. If response is 403/401, body is <500 chars, or paywall indicators detected → fall back to RSS description
 3. Whatever text is available gets passed to Gemini
@@ -68,6 +70,7 @@ Admin reviews articles at /admin/articles
 ## Supabase Schema
 
 ### `rss_feeds`
+
 ```sql
 create table rss_feeds (
   id uuid primary key default gen_random_uuid(),
@@ -81,6 +84,7 @@ create table rss_feeds (
 ```
 
 ### `rss_seen_items`
+
 ```sql
 create table rss_seen_items (
   guid text primary key,
@@ -101,6 +105,7 @@ create table rss_seen_items (
 ```
 
 ### `admin_settings`
+
 ```sql
 create table admin_settings (
   key text primary key,
@@ -109,6 +114,7 @@ create table admin_settings (
 ```
 
 Seed data:
+
 ```sql
 insert into admin_settings (key, value) values
   ('relevance_threshold', '3'),
@@ -117,11 +123,12 @@ insert into admin_settings (key, value) values
   ('policy_context', '-- see below --');
 ```
 
----
+## This is already implemented in the Supabase database.
 
 ## AI Scoring
 
 Each article is scored in a single Gemini API call. The prompt includes:
+
 - The article text (or RSS description fallback)
 - The full `policy_context` from `admin_settings`
 - The list of `policy_areas` from `admin_settings`
@@ -143,22 +150,25 @@ Response must be valid JSON:
 
 ### Field definitions
 
-| Field | Type | Description |
-|---|---|---|
-| `relevance` | 1–5 | How closely the article touches the party's policy areas |
-| `actionability` | 1–5 | Whether there is a concrete hook (vote, statement, statistic, opponent position) to respond to |
-| `sentiment` | string | `opportunity` = supports party position / `threat` = undermines it / `neutral` |
-| `urgency` | string | `this week` = breaking/imminent / `this month` = upcoming / `background` = slow-burn context |
-| `policy_area` | string | Must match one of the values in `admin_settings.policy_areas` |
-| `summary` | string | 2–3 sentence summary in German |
-| `reason` | string | Explanation of relevance and suggested angle, in German |
+| Field           | Type   | Description                                                                                    |
+| --------------- | ------ | ---------------------------------------------------------------------------------------------- |
+| `relevance`     | 1–5    | How closely the article touches the party's policy areas                                       |
+| `actionability` | 1–5    | Whether there is a concrete hook (vote, statement, statistic, opponent position) to respond to |
+| `sentiment`     | string | `opportunity` = supports party position / `threat` = undermines it / `neutral`                 |
+| `urgency`       | string | `this week` = breaking/imminent / `this month` = upcoming / `background` = slow-burn context   |
+| `policy_area`   | string | Must match one of the values in `admin_settings.policy_areas`                                  |
+| `summary`       | string | 2–3 sentence summary in German                                                                 |
+| `reason`        | string | Explanation of relevance and suggested angle, in German                                        |
 
 ### Filtering logic
+
 An article is saved if: `relevance >= relevance_threshold AND actionability >= actionability_threshold`
 Both thresholds are read from `admin_settings` — never hardcoded.
 
 ### Prompt guidance
+
 Instruct Gemini explicitly to use the full 1–5 range. Without this, the model clusters around 3. Example instruction to include in prompt:
+
 > "Verwende die gesamte Skala von 1–5. Eine 5 bedeutet aussergewöhnlich relevant/umsetzbar. Eine 1 bedeutet völlig irrelevant. Vermeide es, alles mit 3 zu bewerten."
 
 ---
@@ -265,12 +275,12 @@ SONSTIGES (Medien & Digitalisierung):
 All `/admin/*` routes are protected by Next.js middleware using Supabase Auth.
 Single admin user, created manually in the Supabase dashboard. No public signup.
 
-| Route | Description |
-|---|---|
-| `/admin` | Login page; redirects to `/admin/articles` if already authenticated |
+| Route             | Description                                                                                  |
+| ----------------- | -------------------------------------------------------------------------------------------- |
+| `/admin`          | Login page; redirects to `/admin/articles` if already authenticated                          |
 | `/admin/articles` | Article digest; default sort by policy area; filterable by outlet, sentiment, urgency, score |
-| `/admin/feeds` | Add / toggle / remove RSS feeds; shows `last_fetched_at` and `last_error` per feed |
-| `/admin/settings` | Edit policy context, policy areas, relevance threshold, actionability threshold |
+| `/admin/feeds`    | Add / toggle / remove RSS feeds; shows `last_fetched_at` and `last_error` per feed           |
+| `/admin/settings` | Edit policy context, policy areas, relevance threshold, actionability threshold              |
 
 The admin UI is read-only for articles — no mark-as-used or notes needed.
 
@@ -317,5 +327,5 @@ CRON_SECRET=qHdAokZVfdu7KOUvkGEybTB1kraw+zyEireBVAlq0dI=
 Free tiers only — do not introduce any paid services.
 
 - Vercel free tier: use GitHub Actions for scheduling (Vercel free only allows 1 cron/day)
-- Gemini 1.5 Flash: 1,500 requests/day free — sufficient for weekly runs
+- Gemini 1.5 Flash: 1,500 requests/day free — sufficient for weekly/bi-weekly runs
 - Supabase free tier: 500MB storage, 2GB bandwidth
