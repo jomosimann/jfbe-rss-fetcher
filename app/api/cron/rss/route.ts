@@ -255,6 +255,8 @@ POLITIKBEREICHE (wähle genau einen): ${policyAreas}
 ARTIKELTEXT:
 ${text}
 
+Bevor du bewertest: Prüfe, ob der Artikel einen direkten Bezug zur Schweiz hat (Schweizer Politik, Schweizer Institutionen, Schweizer Unternehmen, Schweizer Gesellschaft, oder gravierende Auswirkungen auf die Schweiz). Hat der Artikel keinen solchen Bezug, setze relevance und actionability beide auf 1 und policy_area auf Sonstiges. Bewerte nur Artikel mit Schweiz-Bezug vollständig.
+
 BEWERTUNGSKRITERIEN:
 - relevance (1–5): Wie eng berührt der Artikel die Politikbereiche der Partei?
 - actionability (1–5): Gibt es einen konkreten Aufhänger (Abstimmung, Aussage, Statistik, gegnerische Position), auf den reagiert werden kann?
