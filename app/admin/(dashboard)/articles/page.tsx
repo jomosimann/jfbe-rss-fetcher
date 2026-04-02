@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import ArticleList from './ArticleList'
+import NextFetch from './NextFetch'
 
 export default async function ArticlesPage() {
   const supabase = await createClient()
@@ -25,6 +26,7 @@ export default async function ArticlesPage() {
         <p className="mt-1 text-sm text-gray-500">
           Bewertete Artikel aus allen aktiven Feeds, sortiert nach Politikbereich.
         </p>
+        <NextFetch />
       </div>
 
       <ArticleList articles={articles ?? []} />
