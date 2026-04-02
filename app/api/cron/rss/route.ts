@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import Parser from 'rss-parser'
-import * as cheerio from 'cheerio'
+import { Readability } from '@mozilla/readability'
+import { JSDOM } from 'jsdom'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 
 const parser = new Parser()
@@ -201,25 +202,19 @@ async function fetchArticleBody(url: string): Promise<string> {
     }
     const html = await res.text()
     console.log(`[fetchArticleBody] HTML length: ${html.length} chars`)
-    const $ = cheerio.load(html)
 
-    // Remove non-content elements
-    $('script, style, nav, header, footer, aside, .ad, .advertisement, .sidebar').remove()
+    const dom = new JSDOM(html, { url })
+    const reader = new Readability(dom.window.document)
+    const article = reader.parse()
 
-    // Try common article selectors
-    const selectors = ['article', '[role="main"]', '.article-body', '.story-body', '.post-content', 'main']
-    for (const sel of selectors) {
-      const text = $(sel).text().trim()
-      if (text.length >= 500) {
-        console.log(`[fetchArticleBody] Matched selector "${sel}": ${text.length} chars`)
-        return text
-      }
+    if (article?.textContent) {
+      const text = article.textContent.trim()
+      console.log(`[fetchArticleBody] Readability extracted: ${text.length} chars`)
+      return text
     }
 
-    // Fallback: body text
-    const bodyText = $('body').text().trim()
-    console.log(`[fetchArticleBody] No selector matched, using body: ${bodyText.length} chars`)
-    return bodyText
+    console.log('[fetchArticleBody] Readability returned no content')
+    return ''
   } catch (err) {
     console.error(`[fetchArticleBody] Error fetching ${url}:`, err instanceof Error ? err.message : String(err))
     return ''
