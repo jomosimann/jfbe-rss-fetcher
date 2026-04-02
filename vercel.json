@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "app/api/cron/rss/route.ts": {
+      "maxDuration": 300
+    }
+  }
+}
