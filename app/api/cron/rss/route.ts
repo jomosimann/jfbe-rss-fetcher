@@ -58,10 +58,27 @@ export async function POST(request: NextRequest) {
 
   let totalProcessed = 0
   let totalSaved = 0
+  let totalWireDuplicatesSkipped = 0
+  let totalTitleDuplicatesSkipped = 0
+
+  // --- Phase 1: Collect all new items across all feeds ---
+  type CollectedItem = {
+    feedId: string
+    outletName: string
+    guid: string
+    articleUrl: string
+    title: string
+    articleText: string
+    isWire: boolean
+    publishedAt: string | null
+  }
+
+  const allNewItems: CollectedItem[] = []
+  const feedErrors: Map<string, string | null> = new Map()
 
   for (const feed of feeds) {
     let feedError: string | null = null
-    console.log(`[cron/rss] --- Processing feed: "${feed.outlet_name}" (${feed.url}) ---`)
+    console.log(`[cron/rss] --- Collecting from feed: "${feed.outlet_name}" (${feed.url}) ---`)
 
     try {
       const rssFeed = await parser.parseURL(feed.url)
@@ -89,12 +106,11 @@ export async function POST(request: NextRequest) {
         return guid && !existingGuids.has(guid)
       })
 
-      console.log(`[cron/rss] [${feed.outlet_name}] New items to process: ${newItems.length}`)
+      console.log(`[cron/rss] [${feed.outlet_name}] New items to collect: ${newItems.length}`)
 
       for (const item of newItems) {
         const guid = item.guid || item.link || ''
         const articleUrl = item.link || ''
-        console.log(`[cron/rss] [${feed.outlet_name}] Processing item: "${item.title}" (guid: ${guid})`)
 
         // --- Fetch article body ---
         let articleText = await fetchArticleBody(articleUrl)
@@ -111,61 +127,28 @@ export async function POST(request: NextRequest) {
           continue
         }
 
-        // --- Score with Gemini ---
-        console.log(`[cron/rss] [${feed.outlet_name}] Sending to Gemini (${articleText.slice(0, 12_000).length} chars)...`)
-        const score = await scoreArticle(model, articleText, policyContext, policyAreas)
-
-        if (!score) {
-          console.log(`[cron/rss] [${feed.outlet_name}] SKIPPED (Gemini returned null): "${item.title}"`)
-          continue
+        const isWire = detectWireReport(item.title ?? '', articleText)
+        if (isWire) {
+          console.log(`[cron/rss] [${feed.outlet_name}] Wire report detected: "${item.title}"`)
         }
 
-        console.log(`[cron/rss] [${feed.outlet_name}] Gemini score:`, {
-          title: item.title,
-          relevance: score.relevance,
-          actionability: score.actionability,
-          sentiment: score.sentiment,
-          urgency: score.urgency,
-          policy_area: score.policy_area,
+        allNewItems.push({
+          feedId: feed.id,
+          outletName: feed.outlet_name,
+          guid,
+          articleUrl,
+          title: item.title ?? '',
+          articleText,
+          isWire,
+          publishedAt: item.isoDate || item.pubDate || null,
         })
-
-        totalProcessed++
-
-        // --- Threshold check ---
-        if (score.relevance >= relevanceThreshold && score.actionability >= actionabilityThreshold) {
-          console.log(`[cron/rss] [${feed.outlet_name}] ABOVE THRESHOLD — inserting into rss_seen_items`)
-          const { error: insertError } = await supabase
-            .from('rss_seen_items')
-            .insert({
-              guid,
-              feed_id: feed.id,
-              outlet_name: feed.outlet_name,
-              title: item.title ?? '',
-              url: articleUrl,
-              relevance: score.relevance,
-              actionability: score.actionability,
-              sentiment: score.sentiment,
-              urgency: score.urgency,
-              policy_area: score.policy_area,
-              summary: score.summary,
-              reason: score.reason,
-              published_at: item.isoDate || item.pubDate || null,
-            })
-
-          if (insertError) {
-            console.error(`[cron/rss] [${feed.outlet_name}] INSERT ERROR:`, insertError.message)
-          } else {
-            console.log(`[cron/rss] [${feed.outlet_name}] SAVED: "${item.title}"`)
-            totalSaved++
-          }
-        } else {
-          console.log(`[cron/rss] [${feed.outlet_name}] BELOW THRESHOLD — not saving (relevance=${score.relevance}, actionability=${score.actionability})`)
-        }
       }
     } catch (err) {
       feedError = err instanceof Error ? err.message : String(err)
       console.error(`[cron/rss] [${feed.outlet_name}] FEED ERROR:`, feedError)
     }
+
+    feedErrors.set(feed.id, feedError)
 
     // --- Update feed status ---
     await supabase
@@ -178,8 +161,98 @@ export async function POST(request: NextRequest) {
     console.log(`[cron/rss] [${feed.outlet_name}] Updated feed status (error: ${feedError ?? 'none'})`)
   }
 
-  console.log(`[cron/rss] DONE. Processed: ${totalProcessed}, Saved: ${totalSaved}`)
-  return NextResponse.json({ processed: totalProcessed, saved: totalSaved })
+  console.log(`[cron/rss] Total new items collected across all feeds: ${allNewItems.length}`)
+
+  // --- Phase 2: Wire report deduplication ---
+  // Group wire reports by title similarity; keep only one per group
+  const wireItems = allNewItems.filter((item) => item.isWire)
+  const nonWireItems = allNewItems.filter((item) => !item.isWire)
+  const wireGroups = groupBySimilarTitle(wireItems)
+  const keptAfterWireDedup: CollectedItem[] = [...nonWireItems]
+
+  for (const group of wireGroups) {
+    const kept = pickPreferredOutlet(group)
+    keptAfterWireDedup.push(kept)
+    const skipped = group.length - 1
+    totalWireDuplicatesSkipped += skipped
+    if (skipped > 0) {
+      console.log(`[cron/rss] Wire dedup: kept "${kept.title}" from ${kept.outletName}, skipped ${skipped} duplicate(s): ${group.filter((i) => i !== kept).map((i) => `"${i.title}" (${i.outletName})`).join(', ')}`)
+    }
+  }
+
+  console.log(`[cron/rss] After wire dedup: ${keptAfterWireDedup.length} items (${totalWireDuplicatesSkipped} wire duplicates skipped)`)
+
+  // --- Phase 3: Title similarity deduplication across all items ---
+  const titleGroups = groupBySimilarTitle(keptAfterWireDedup)
+  const itemsToScore: CollectedItem[] = []
+
+  for (const group of titleGroups) {
+    const kept = pickPreferredOutlet(group)
+    itemsToScore.push(kept)
+    const skipped = group.length - 1
+    totalTitleDuplicatesSkipped += skipped
+    if (skipped > 0) {
+      console.log(`[cron/rss] Title dedup: kept "${kept.title}" from ${kept.outletName}, skipped ${skipped} duplicate(s): ${group.filter((i) => i !== kept).map((i) => `"${i.title}" (${i.outletName})`).join(', ')}`)
+    }
+  }
+
+  console.log(`[cron/rss] After title dedup: ${itemsToScore.length} items to score (${totalTitleDuplicatesSkipped} title duplicates skipped)`)
+
+  // --- Phase 4: Score with Gemini and save ---
+  for (const item of itemsToScore) {
+    console.log(`[cron/rss] [${item.outletName}] Sending to Gemini: "${item.title}" (${item.articleText.slice(0, 12_000).length} chars)...`)
+    const score = await scoreArticle(model, item.articleText, policyContext, policyAreas)
+
+    if (!score) {
+      console.log(`[cron/rss] [${item.outletName}] SKIPPED (Gemini returned null): "${item.title}"`)
+      continue
+    }
+
+    console.log(`[cron/rss] [${item.outletName}] Gemini score:`, {
+      title: item.title,
+      relevance: score.relevance,
+      actionability: score.actionability,
+      sentiment: score.sentiment,
+      urgency: score.urgency,
+      policy_area: score.policy_area,
+    })
+
+    totalProcessed++
+
+    // --- Threshold check ---
+    if (score.relevance >= relevanceThreshold && score.actionability >= actionabilityThreshold) {
+      console.log(`[cron/rss] [${item.outletName}] ABOVE THRESHOLD — inserting into rss_seen_items`)
+      const { error: insertError } = await supabase
+        .from('rss_seen_items')
+        .insert({
+          guid: item.guid,
+          feed_id: item.feedId,
+          outlet_name: item.outletName,
+          title: item.title,
+          url: item.articleUrl,
+          relevance: score.relevance,
+          actionability: score.actionability,
+          sentiment: score.sentiment,
+          urgency: score.urgency,
+          policy_area: score.policy_area,
+          summary: score.summary,
+          reason: score.reason,
+          published_at: item.publishedAt,
+        })
+
+      if (insertError) {
+        console.error(`[cron/rss] [${item.outletName}] INSERT ERROR:`, insertError.message)
+      } else {
+        console.log(`[cron/rss] [${item.outletName}] SAVED: "${item.title}"`)
+        totalSaved++
+      }
+    } else {
+      console.log(`[cron/rss] [${item.outletName}] BELOW THRESHOLD — not saving (relevance=${score.relevance}, actionability=${score.actionability})`)
+    }
+  }
+
+  console.log(`[cron/rss] DONE. Processed: ${totalProcessed}, Saved: ${totalSaved}, Wire duplicates skipped: ${totalWireDuplicatesSkipped}, Title duplicates skipped: ${totalTitleDuplicatesSkipped}`)
+  return NextResponse.json({ processed: totalProcessed, saved: totalSaved, wireDuplicatesSkipped: totalWireDuplicatesSkipped, titleDuplicatesSkipped: totalTitleDuplicatesSkipped })
 }
 
 // --- Helpers ---
@@ -219,6 +292,100 @@ async function fetchArticleBody(url: string): Promise<string> {
     console.error(`[fetchArticleBody] Error fetching ${url}:`, err instanceof Error ? err.message : String(err))
     return ''
   }
+}
+
+const WIRE_INDICATORS = [
+  'Keystone-SDA',
+  'SDA/ATS',
+  'Keystone',
+  '(sda)',
+  '(ats)',
+  '(awp)',
+  ' sda)',
+  ' ats)',
+  ' awp)',
+]
+
+const WIRE_REGEX = /\b(?:sda|ats|awp)\b/i
+
+function detectWireReport(title: string, body: string): boolean {
+  const combined = `${title} ${body.slice(0, 2000)}`
+  for (const indicator of WIRE_INDICATORS) {
+    if (combined.includes(indicator)) return true
+  }
+  return WIRE_REGEX.test(combined)
+}
+
+// --- Title similarity deduplication helpers ---
+
+const GERMAN_STOPWORDS = new Set([
+  'der', 'die', 'das', 'und', 'in', 'von', 'mit', 'für', 'ist', 'auf',
+  'an', 'im', 'zu', 'den', 'des', 'ein', 'eine', 'einem', 'einen', 'einer',
+  'es', 'als', 'auch', 'aus', 'bei', 'bis', 'dem', 'nach', 'nicht', 'noch',
+  'oder', 'sich', 'so', 'über', 'um', 'wie', 'wird', 'vor', 'zum', 'zur',
+  'hat', 'dass', 'werden', 'vom', 'kann', 'mehr', 'sind', 'war', 'was',
+  'wir', 'sie', 'er', 'aber', 'wenn', 'nur', 'dann', 'schon', 'hier',
+  'seine', 'seine', 'ihre', 'man', 'alle', 'am', 'diese', 'dieser', 'diesem',
+  'nun', 'haben', 'da', 'dort', 'wo', 'will', 'neue', 'neuer', 'neues',
+  'neue', 'gegen', 'unter', 'keine', 'kein', 'doch', 'soll', 'sei',
+])
+
+function extractSignificantWords(title: string): Set<string> {
+  const words = title
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, '') // strip punctuation, keep letters/numbers
+    .split(/\s+/)
+    .filter((w) => w.length > 1 && !GERMAN_STOPWORDS.has(w))
+  return new Set(words)
+}
+
+function titleWordOverlap(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0
+  let shared = 0
+  for (const word of a) {
+    if (b.has(word)) shared++
+  }
+  const smaller = Math.min(a.size, b.size)
+  return shared / smaller
+}
+
+// Outlet priority for deduplication: prefer NZZ > SRF News > BZ > others
+const OUTLET_PRIORITY: Record<string, number> = {
+  'NZZ': 1,
+  'SRF News': 2,
+  'BZ': 3,
+}
+
+function pickPreferredOutlet<T extends { outletName: string }>(group: T[]): T {
+  return group.sort((a, b) => {
+    const pa = OUTLET_PRIORITY[a.outletName] ?? 99
+    const pb = OUTLET_PRIORITY[b.outletName] ?? 99
+    return pa - pb
+  })[0]
+}
+
+function groupBySimilarTitle<T extends { title: string }>(items: T[]): T[][] {
+  const wordSets = items.map((item) => extractSignificantWords(item.title))
+  const assigned = new Array(items.length).fill(false)
+  const groups: T[][] = []
+
+  for (let i = 0; i < items.length; i++) {
+    if (assigned[i]) continue
+    const group: T[] = [items[i]]
+    assigned[i] = true
+
+    for (let j = i + 1; j < items.length; j++) {
+      if (assigned[j]) continue
+      if (titleWordOverlap(wordSets[i], wordSets[j]) > 0.5) {
+        group.push(items[j])
+        assigned[j] = true
+      }
+    }
+
+    groups.push(group)
+  }
+
+  return groups
 }
 
 async function scoreArticle(
