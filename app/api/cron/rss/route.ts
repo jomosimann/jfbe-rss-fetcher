@@ -215,6 +215,7 @@ export async function POST(request: NextRequest) {
       sentiment: score.sentiment,
       urgency: score.urgency,
       policy_area: score.policy_area,
+      region: score.region,
     })
 
     totalProcessed++
@@ -235,6 +236,7 @@ export async function POST(request: NextRequest) {
           sentiment: score.sentiment,
           urgency: score.urgency,
           policy_area: score.policy_area,
+          region: score.region,
           summary: score.summary,
           reason: score.reason,
           published_at: item.publishedAt,
@@ -399,6 +401,7 @@ async function scoreArticle(
   sentiment: string
   urgency: string
   policy_area: string
+  region: string
   summary: string
   reason: string
 } | null> {
@@ -425,14 +428,15 @@ BEWERTUNGSKRITERIEN:
 - sentiment: "opportunity" (stützt Parteiposition), "threat" (untergräbt sie) oder "neutral"
 - urgency: "this week" (akut/dringend), "this month" (bevorstehend) oder "background" (Hintergrund)
 - policy_area: Genau einer der oben genannten Politikbereiche
+- region: Die Region, auf die sich der Artikel bezieht. Erlaubte Werte: "Bern Stadt", "Thun und Umgebung", "Berner Oberland", "Seeland", "Biel/Bienne", "Burgdorf/Emmental", "Langenthal-Oberaargau", "Jura bernois", "Mittelland", "Kanton Bern", "Schweiz". Leite die Region aus dem Artikelinhalt ab. Falls kein klarer regionaler Bezug innerhalb des Kantons Bern erkennbar ist, verwende "Schweiz". Falls der Artikel den gesamten Kanton betrifft, verwende "Kanton Bern".
 - summary: Zusammenfassung in 2–3 Sätzen auf Deutsch
 - reason: Warum ist der Artikel politisch relevant und was könnte die Partei damit machen? Auf Deutsch.
 
 WICHTIG: Verwende die gesamte Skala von 1–5. Eine 5 bedeutet aussergewöhnlich relevant/umsetzbar. Eine 1 bedeutet völlig irrelevant. Vermeide es, alles mit 3 zu bewerten.
-WICHTIG: Analysiere zuerst, ob der Artikel überhaupt einen Schweiz- resp. bei Regionalmedien einen Kanton-Bern-Bezug hat. Gerade bei aussenpolitischen Meldungen relevant. Falls nicht, stoppe deine Analysee und gehe zum nächsten. Kein Schweiz-Bezug beeutet sofort Actionability und Opportunity = 0.
+WICHTIG: Analysiere zuerst, ob der Artikel überhaupt einen Schweiz- resp. bei einen Kanton-Bern-Bezug hat. Gerade bei aussenpolitischen Meldungen relevant. Falls nicht, stoppe deine Analyse und gehe zum nächsten. Kein Schweiz-Bezug beeutet sofort Actionability und Opportunity = 0.
 
 Antworte ausschliesslich mit validem JSON in diesem Format:
-{"relevance": number, "actionability": number, "sentiment": string, "urgency": string, "policy_area": string, "summary": string, "reason": string}`
+{"relevance": number, "actionability": number, "sentiment": string, "urgency": string, "policy_area": string, "region": string, "summary": string, "reason": string}`
 
   try {
     console.log('[scoreArticle] Calling Gemini...')
@@ -457,6 +461,7 @@ Antworte ausschliesslich mit validem JSON in diesem Format:
       typeof parsed.sentiment !== 'string' ||
       typeof parsed.urgency !== 'string' ||
       typeof parsed.policy_area !== 'string' ||
+      typeof parsed.region !== 'string' ||
       typeof parsed.summary !== 'string' ||
       typeof parsed.reason !== 'string'
     ) {
@@ -466,6 +471,7 @@ Antworte ausschliesslich mit validem JSON in diesem Format:
         sentiment: typeof parsed.sentiment,
         urgency: typeof parsed.urgency,
         policy_area: typeof parsed.policy_area,
+        region: typeof parsed.region,
         summary: typeof parsed.summary,
         reason: typeof parsed.reason,
       })

@@ -13,6 +13,7 @@ interface Article {
   sentiment: string
   urgency: string
   policy_area: string
+  region: string | null
   summary: string
   reason: string
   published_at: string | null
@@ -57,6 +58,7 @@ export default function ArticleList({ articles }: { articles: Article[] }) {
   const [outlet, setOutlet] = useState('')
   const [sentiment, setSentiment] = useState('')
   const [urgency, setUrgency] = useState('')
+  const [region, setRegion] = useState('')
   const [minRelevance, setMinRelevance] = useState(1)
   const [minActionability, setMinActionability] = useState(1)
 
@@ -70,11 +72,12 @@ export default function ArticleList({ articles }: { articles: Article[] }) {
       if (outlet && a.outlet_name !== outlet) return false
       if (sentiment && a.sentiment !== sentiment) return false
       if (urgency && a.urgency !== urgency) return false
+      if (region && a.region !== region) return false
       if (a.relevance < minRelevance) return false
       if (a.actionability < minActionability) return false
       return true
     })
-  }, [articles, outlet, sentiment, urgency, minRelevance, minActionability])
+  }, [articles, outlet, sentiment, urgency, region, minRelevance, minActionability])
 
   return (
     <>
@@ -122,6 +125,28 @@ export default function ArticleList({ articles }: { articles: Article[] }) {
               <option value="this week">Diese Woche</option>
               <option value="this month">Dieser Monat</option>
               <option value="background">Hintergrund</option>
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="block text-xs font-medium text-gray-500">Region</label>
+            <select
+              value={region}
+              onChange={(e) => setRegion(e.target.value)}
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="">Alle</option>
+              <option value="Bern Stadt">Bern Stadt</option>
+              <option value="Thun und Umgebung">Thun und Umgebung</option>
+              <option value="Berner Oberland">Berner Oberland</option>
+              <option value="Seeland">Seeland</option>
+              <option value="Biel/Bienne">Biel/Bienne</option>
+              <option value="Burgdorf/Emmental">Burgdorf/Emmental</option>
+              <option value="Langenthal-Oberaargau">Langenthal-Oberaargau</option>
+              <option value="Jura bernois">Jura bernois</option>
+              <option value="Mittelland">Mittelland</option>
+              <option value="Kanton Bern">Kanton Bern</option>
+              <option value="Schweiz">Schweiz</option>
             </select>
           </div>
 
@@ -192,9 +217,16 @@ export default function ArticleList({ articles }: { articles: Article[] }) {
                   <p className="text-xs text-gray-500">{a.outlet_name}</p>
                 </div>
 
-                <span className="shrink-0 rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700">
-                  {a.policy_area}
-                </span>
+                <div className="flex shrink-0 gap-2">
+                  <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700">
+                    {a.policy_area}
+                  </span>
+                  {a.region && (
+                    <span className="rounded-full bg-purple-50 px-2.5 py-0.5 text-xs font-medium text-purple-700">
+                      {a.region}
+                    </span>
+                  )}
+                </div>
               </div>
 
               {/* Badges */}
