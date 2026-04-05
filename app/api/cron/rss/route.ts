@@ -83,8 +83,21 @@ export async function POST(request: NextRequest) {
 
     try {
       const rssFeed = await parser.parseURL(feed.url)
-      const items = rssFeed.items ?? []
-      console.log(`[cron/rss] [${feed.outlet_name}] Parsed ${items.length} items from RSS`)
+      const allItems = rssFeed.items ?? []
+      console.log(`[cron/rss] [${feed.outlet_name}] Parsed ${allItems.length} items from RSS`)
+
+      // --- Lookback window: discard items older than 4 days ---
+      const lookbackMs = 4 * 24 * 60 * 60 * 1000
+      const cutoff = new Date(Date.now() - lookbackMs)
+      const items = allItems.filter((item) => {
+        const pubDate = item.isoDate || item.pubDate
+        if (!pubDate) return true // keep items without a date
+        return new Date(pubDate) >= cutoff
+      })
+      const lookbackDiscarded = allItems.length - items.length
+      if (lookbackDiscarded > 0) {
+        console.log(`[cron/rss] [${feed.outlet_name}] Lookback window: discarded ${lookbackDiscarded} items older than 4 days`)
+      }
 
       // Collect guids to check which are already seen
       const guids = items
