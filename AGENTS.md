@@ -287,23 +287,6 @@ The admin UI is read-only for articles — no mark-as-used or notes needed.
 
 ---
 
-## Environment Variables
-
-```
-# Supabase
-NEXT_PUBLIC_SUPABASE_URL=https://ugwmomnoglskeijzyisu.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_BBYRqKRpHLeRmZszRNmcwQ_rO3zLojd
-SUPABASE_SERVICE_ROLE_KEY=sb_secret_Jh1cU4Je4Ug9l6fj8wnjKg_09jvccL_
-
-# Gemini
-GEMINI_API_KEY=AIzaSyB8fdQmbgavmD4i9oJsMJ2oaoaxC4Jqv_k
-
-# Cron protection
-CRON_SECRET=qHdAokZVfdu7KOUvkGEybTB1kraw+zyEireBVAlq0dI=
-```
-
----
-
 ## Language Conventions
 
 - All UI copy in German (Schweizer Hochdeutsch)
