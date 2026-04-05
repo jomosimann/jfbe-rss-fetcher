@@ -81,7 +81,7 @@ POST /api/cron/rss  ◄── protected by CRON_SECRET bearer token
 - **Outlet preference** — when deduplicating, prefers NZZ > SRF News > BZ > others
 - **Configurable thresholds** — relevance and actionability thresholds adjustable in admin settings
 - **Configurable policy context** — the full party platform and policy areas are editable at runtime
-- **German-language output** — all AI summaries and UI copy in Swiss Standard German (ss, not ss)
+- **German-language output** — all AI summaries and UI copy in Swiss Standard German
 - **Protected admin dashboard** — Supabase Auth with single admin user
 - **Zero cost** — runs entirely on free tiers (Vercel, Supabase, Gemini, GitHub Actions)
 
