@@ -4,6 +4,7 @@ import Parser from 'rss-parser'
 import { Readability } from '@mozilla/readability'
 import { JSDOM } from 'jsdom'
 import { GoogleGenerativeAI } from '@google/generative-ai'
+import pLimit from 'p-limit'
 
 const parser = new Parser()
 
@@ -198,59 +199,69 @@ export async function POST(request: NextRequest) {
 
   console.log(`[cron/rss] After title dedup: ${itemsToScore.length} items to score (${totalTitleDuplicatesSkipped} title duplicates skipped)`)
 
-  // --- Phase 4: Score with Gemini and save ---
-  for (const item of itemsToScore) {
-    console.log(`[cron/rss] [${item.outletName}] Sending to Gemini: "${item.title}" (${item.articleText.slice(0, 12_000).length} chars)...`)
-    const score = await scoreArticle(model, item.articleText, policyContext, policyAreas)
+  // --- Phase 4: Score with Gemini in parallel and save ---
+  console.log(`[cron/rss] Sending ${itemsToScore.length} articles to Gemini for scoring (concurrency: 5)...`)
+  const limit = pLimit(5)
 
-    if (!score) {
-      console.log(`[cron/rss] [${item.outletName}] SKIPPED (Gemini returned null): "${item.title}"`)
-      continue
-    }
+  const scoringTasks = itemsToScore.map((item) =>
+    limit(async () => {
+      console.log(`[cron/rss] [${item.outletName}] Sending to Gemini: "${item.title}" (${item.articleText.slice(0, 12_000).length} chars)...`)
+      const score = await scoreArticle(model, item.articleText, policyContext, policyAreas)
 
-    console.log(`[cron/rss] [${item.outletName}] Gemini score:`, {
-      title: item.title,
-      relevance: score.relevance,
-      actionability: score.actionability,
-      sentiment: score.sentiment,
-      urgency: score.urgency,
-      policy_area: score.policy_area,
-      region: score.region,
-    })
-
-    totalProcessed++
-
-    // --- Threshold check ---
-    if (score.relevance >= relevanceThreshold && score.actionability >= actionabilityThreshold) {
-      console.log(`[cron/rss] [${item.outletName}] ABOVE THRESHOLD — inserting into rss_seen_items`)
-      const { error: insertError } = await supabase
-        .from('rss_seen_items')
-        .insert({
-          guid: item.guid,
-          feed_id: item.feedId,
-          outlet_name: item.outletName,
-          title: item.title,
-          url: item.articleUrl,
-          relevance: score.relevance,
-          actionability: score.actionability,
-          sentiment: score.sentiment,
-          urgency: score.urgency,
-          policy_area: score.policy_area,
-          region: score.region,
-          summary: score.summary,
-          reason: score.reason,
-          published_at: item.publishedAt,
-        })
-
-      if (insertError) {
-        console.error(`[cron/rss] [${item.outletName}] INSERT ERROR:`, insertError.message)
-      } else {
-        console.log(`[cron/rss] [${item.outletName}] SAVED: "${item.title}"`)
-        totalSaved++
+      if (!score) {
+        console.log(`[cron/rss] [${item.outletName}] SKIPPED (Gemini returned null): "${item.title}"`)
+        return { processed: false, saved: false }
       }
-    } else {
-      console.log(`[cron/rss] [${item.outletName}] BELOW THRESHOLD — not saving (relevance=${score.relevance}, actionability=${score.actionability})`)
-    }
+
+      console.log(`[cron/rss] [${item.outletName}] Gemini score:`, {
+        title: item.title,
+        relevance: score.relevance,
+        actionability: score.actionability,
+        sentiment: score.sentiment,
+        urgency: score.urgency,
+        policy_area: score.policy_area,
+        region: score.region,
+      })
+
+      // --- Threshold check ---
+      if (score.relevance >= relevanceThreshold && score.actionability >= actionabilityThreshold) {
+        console.log(`[cron/rss] [${item.outletName}] ABOVE THRESHOLD — inserting into rss_seen_items`)
+        const { error: insertError } = await supabase
+          .from('rss_seen_items')
+          .insert({
+            guid: item.guid,
+            feed_id: item.feedId,
+            outlet_name: item.outletName,
+            title: item.title,
+            url: item.articleUrl,
+            relevance: score.relevance,
+            actionability: score.actionability,
+            sentiment: score.sentiment,
+            urgency: score.urgency,
+            policy_area: score.policy_area,
+            region: score.region,
+            summary: score.summary,
+            reason: score.reason,
+            published_at: item.publishedAt,
+          })
+
+        if (insertError) {
+          console.error(`[cron/rss] [${item.outletName}] INSERT ERROR:`, insertError.message)
+          return { processed: true, saved: false }
+        }
+        console.log(`[cron/rss] [${item.outletName}] SAVED: "${item.title}"`)
+        return { processed: true, saved: true }
+      } else {
+        console.log(`[cron/rss] [${item.outletName}] BELOW THRESHOLD — not saving (relevance=${score.relevance}, actionability=${score.actionability})`)
+        return { processed: true, saved: false }
+      }
+    })
+  )
+
+  const results = await Promise.all(scoringTasks)
+  for (const r of results) {
+    if (r.processed) totalProcessed++
+    if (r.saved) totalSaved++
   }
 
   console.log(`[cron/rss] DONE. Processed: ${totalProcessed}, Saved: ${totalSaved}, Wire duplicates skipped: ${totalWireDuplicatesSkipped}, Title duplicates skipped: ${totalTitleDuplicatesSkipped}`)

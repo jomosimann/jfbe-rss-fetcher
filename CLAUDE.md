@@ -7,7 +7,7 @@ Do not delete it. Update it when the project evolves.
 
 ## Project Overview
 
-A private tool that monitors a configurable list of RSS news feeds once per week, scores each new article for political relevance using AI, and surfaces high-scoring articles in a private admin dashboard.
+A private tool that monitors a configurable list of RSS news feeds twice per week (Monday & Thursday), scores each new article for political relevance using AI, and surfaces high-scoring articles in a private admin dashboard.
 
 **Goal:** Catch opportunities for political messaging without manually reading newspapers daily.
 
@@ -24,46 +24,87 @@ A private tool that monitors a configurable list of RSS news feeds once per week
 | Scheduler          | GitHub Actions (`schedule:`)                                   |
 | Note               | Next.js 15 uses async cookies/headers APIs — always await them |
 | RSS parsing        | `rss-parser` (npm)                                             |
-| Article extraction | `cheerio` (npm)                                                |
-| AI scoring         | Google Gemini 1.5 Flash API (free tier)                        |
+| Article extraction | `@mozilla/readability` + `jsdom` (npm)                         |
+| AI scoring         | Google Gemini 2.5 Flash-Lite API (free tier)                   |
 
 ---
 
 ## Architecture
 
 ```
-GitHub Actions (weekly cron: Monday 07:00 UTC)
+GitHub Actions (cron: Monday & Thursday 07:00 UTC)
         ↓
-POST /api/cron/rss  (protected by CRON_SECRET header)
+POST /api/cron/rss  (protected by CRON_SECRET bearer token)
         ↓
-Fetch active RSS feeds from Supabase (rss_feeds table)
-Fetch admin_settings (score threshold, policy areas, prompt focus, policy context)
-        ↓
-For each new item (not already in rss_seen_items):
-  → Try to fetch full article body via cheerio
-  → Fallback to RSS description if paywalled / blocked / <500 chars
-        ↓
-Send to Gemini 1.5 Flash with full scoring prompt
-(includes article text + party policy context from admin_settings)
-  → Returns: { relevance, actionability, sentiment, urgency, policy_area, summary, reason }
-        ↓
-If relevance >= threshold AND actionability >= threshold: insert into rss_seen_items
-        ↓
-Admin reviews articles at /admin/articles
+┌─────────────────────────────────────────────┐
+│ Phase 1: Collect                            │
+│ • Fetch active RSS feeds from Supabase      │
+│ • Load admin_settings (thresholds,          │
+│   policy areas, policy context)             │
+│ • For each new item (not in seen_items):    │
+│   → Fetch full article via Readability      │
+│   → Fallback to RSS description if          │
+│     paywalled / blocked / < 500 chars       │
+│   → Detect wire reports (SDA/ATS/AWP)       │
+└───────────────┬─────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────────────┐
+│ Phase 2: Wire Deduplication                 │
+│ • Group wire reports by title similarity    │
+│ • Keep one per group (prefer NZZ > SRF      │
+│   > BZ > others)                            │
+└───────────────┬─────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────────────┐
+│ Phase 3: Title Deduplication                │
+│ • Group remaining items by title word       │
+│   overlap (> 50% significant words)         │
+│ • Keep one per group (same preference)      │
+└───────────────┬─────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────────────┐
+│ Phase 4: AI Scoring                         │
+│ • Send each article to Gemini 2.5 Flash-Lite│
+│ • Score: relevance, actionability,          │
+│   sentiment, urgency, policy area,          │
+│   region, summary, reason                   │
+│ • Swiss relevance filter: non-Swiss         │
+│   articles get relevance = 1                │
+│ • Save if above thresholds                  │
+└───────────────┬─────────────────────────────┘
+                │
+                ▼
+        Admin Dashboard
+        /admin/articles
 ```
 
 ### Scheduling detail
 
-- GitHub Actions `schedule: cron: '0 7 * * 1'` (every Monday, 07:00 UTC)
+- GitHub Actions `schedule: cron: '0 7 * * 1,4'` (every Monday and Thursday, 07:00 UTC)
 - Calls `POST /api/cron/rss` on the Vercel deployment
 - Route validates `Authorization: Bearer $CRON_SECRET` before running
 - GitHub Actions is used instead of Vercel Cron to stay on free tier
 
+### Vercel config
+
+`vercel.json` sets `maxDuration: 300` (5 minutes) for the cron route to allow time for fetching and scoring many articles.
+
 ### Article fetching strategy
 
-1. Attempt full article fetch via `fetch()` + `cheerio` HTML parsing
-2. If response is 403/401, body is <500 chars, or paywall indicators detected → fall back to RSS description
+1. Attempt full article fetch via `fetch()` + `@mozilla/readability` (JSDOM) parsing
+2. If response is 403/401, body is <500 chars, or Readability returns no content → fall back to RSS description (`contentSnippet` / `content` / `summary`)
 3. Whatever text is available gets passed to Gemini
+
+### Wire report detection
+
+Wire reports from Swiss news agencies (SDA, ATS, AWP) are detected by scanning the title and first 2000 characters of the body for indicators like `Keystone-SDA`, `(sda)`, `(ats)`, `(awp)`, etc. Detected wire reports are grouped by title similarity and deduplicated in Phase 2.
+
+### Title deduplication
+
+After wire dedup, all remaining items are grouped by significant word overlap. German stopwords are stripped, and if two titles share >50% of their significant words, they are considered duplicates. The preferred outlet's version is kept (NZZ > SRF News > BZ > others).
 
 ---
 
@@ -97,6 +138,7 @@ create table rss_seen_items (
   sentiment text,                   -- 'opportunity' | 'threat' | 'neutral'
   urgency text,                     -- 'this week' | 'this month' | 'background'
   policy_area text,
+  region text,                      -- Bernese region or 'Schweiz' / 'Kanton Bern'
   summary text,                     -- AI-generated, always in German
   reason text,                      -- AI explanation of relevance and suggested angle
   published_at timestamptz,
@@ -127,7 +169,7 @@ insert into admin_settings (key, value) values
 
 ## AI Scoring
 
-Each article is scored in a single Gemini API call. The prompt includes:
+Each article is scored in a single Gemini 2.5 Flash-Lite API call. The prompt includes:
 
 - The article text (or RSS description fallback)
 - The full `policy_context` from `admin_settings`
@@ -143,6 +185,7 @@ Response must be valid JSON:
   "sentiment": "opportunity",
   "urgency": "this week",
   "policy_area": "Wohnen",
+  "region": "Bern Stadt",
   "summary": "Kurze Zusammenfassung auf Deutsch (2-3 Sätze).",
   "reason": "Warum dieser Artikel politisch relevant ist und was die Partei damit machen könnte."
 }
@@ -157,6 +200,7 @@ Response must be valid JSON:
 | `sentiment`     | string | `opportunity` = supports party position / `threat` = undermines it / `neutral`                 |
 | `urgency`       | string | `this week` = breaking/imminent / `this month` = upcoming / `background` = slow-burn context   |
 | `policy_area`   | string | Must match one of the values in `admin_settings.policy_areas`                                  |
+| `region`        | string | Bernese region, `Kanton Bern`, or `Schweiz`                                                    |
 | `summary`       | string | 2–3 sentence summary in German                                                                 |
 | `reason`        | string | Explanation of relevance and suggested angle, in German                                        |
 
@@ -170,6 +214,14 @@ Both thresholds are read from `admin_settings` — never hardcoded.
 Instruct Gemini explicitly to use the full 1–5 range. Without this, the model clusters around 3. Example instruction to include in prompt:
 
 > "Verwende die gesamte Skala von 1–5. Eine 5 bedeutet aussergewöhnlich relevant/umsetzbar. Eine 1 bedeutet völlig irrelevant. Vermeide es, alles mit 3 zu bewerten."
+
+### Swiss relevance filter
+
+The prompt instructs Gemini to first check whether the article has a direct Swiss connection (Swiss politics, institutions, companies, or significant impact on Switzerland). Articles without one receive `relevance = 1` and `actionability = 1` automatically, ensuring foreign news doesn't clutter the digest.
+
+### Region values
+
+The prompt constrains `region` to one of: `Bern Stadt`, `Thun und Umgebung`, `Berner Oberland`, `Seeland`, `Biel/Bienne`, `Burgdorf/Emmental`, `Langenthal-Oberaargau`, `Jura bernois`, `Mittelland`, `Kanton Bern`, `Schweiz`. Defaults to `Schweiz` if no clear Bernese regional link.
 
 ---
 
@@ -327,5 +379,5 @@ CRON_SECRET=qHdAokZVfdu7KOUvkGEybTB1kraw+zyEireBVAlq0dI=
 Free tiers only — do not introduce any paid services.
 
 - Vercel free tier: use GitHub Actions for scheduling (Vercel free only allows 1 cron/day)
-- Gemini 1.5 Flash: 1,500 requests/day free — sufficient for weekly/bi-weekly runs
+- Gemini 2.5 Flash-Lite: free tier — sufficient for twice-weekly runs
 - Supabase free tier: 500MB storage, 2GB bandwidth
