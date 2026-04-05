@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
 
   // --- Gemini client ---
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' })
 
   let totalProcessed = 0
   let totalSaved = 0
