@@ -1,10 +1,10 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 
 export async function saveSettings(formData: FormData) {
-  const supabase = await createClient()
+  const supabase = createServiceClient()
 
   const entries = [
     { key: 'policy_context', value: formData.get('policy_context') as string },

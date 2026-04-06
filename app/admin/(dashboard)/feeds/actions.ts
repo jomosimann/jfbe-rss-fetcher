@@ -1,10 +1,10 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 
 export async function addFeed(formData: FormData) {
-  const supabase = await createClient()
+  const supabase = createServiceClient()
   const outlet_name = (formData.get('outlet_name') as string).trim()
   const url = (formData.get('url') as string).trim()
 
@@ -23,7 +23,7 @@ export async function addFeed(formData: FormData) {
 }
 
 export async function toggleFeed(formData: FormData) {
-  const supabase = await createClient()
+  const supabase = createServiceClient()
   const id = formData.get('id') as string
   const active = formData.get('active') === 'true'
 
@@ -36,7 +36,7 @@ export async function toggleFeed(formData: FormData) {
 }
 
 export async function deleteFeed(formData: FormData) {
-  const supabase = await createClient()
+  const supabase = createServiceClient()
   const id = formData.get('id') as string
 
   await supabase
