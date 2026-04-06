@@ -290,7 +290,9 @@ async function fetchArticleBody(url: string): Promise<string> {
   try {
     console.log(`[fetchArticleBody] Fetching: ${url}`)
     const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; JFBE-RSS-Bot/1.0)' },
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; JFBE-RSS-Bot/1.0)',
+        'Referer': 'https://www.google.com'
+       },
       signal: AbortSignal.timeout(10_000),
     })
     console.log(`[fetchArticleBody] Response: ${res.status} ${res.statusText}`)
