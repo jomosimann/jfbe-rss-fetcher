@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import Parser from 'rss-parser'
-import { Readability } from '@mozilla/readability'
-import { JSDOM } from 'jsdom'
+import { parse } from 'node-html-parser'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import pLimit from 'p-limit'
 
@@ -302,17 +301,32 @@ async function fetchArticleBody(url: string): Promise<string> {
     const html = await res.text()
     console.log(`[fetchArticleBody] HTML length: ${html.length} chars`)
 
-    const dom = new JSDOM(html, { url })
-    const reader = new Readability(dom.window.document)
-    const article = reader.parse()
+    const root = parse(html)
 
-    if (article?.textContent) {
-      const text = article.textContent.trim()
-      console.log(`[fetchArticleBody] Readability extracted: ${text.length} chars`)
-      return text
+    // Try semantic selectors in priority order
+    const selectors = ['article', 'main', '.article-body', '.article-content', '.post-content', '.entry-content', '.content']
+    for (const selector of selectors) {
+      const el = root.querySelector(selector)
+      if (el) {
+        const text = el.textContent.trim()
+        if (text.length >= 500) {
+          console.log(`[fetchArticleBody] Extracted ${text.length} chars via "${selector}"`)
+          return text
+        }
+      }
     }
 
-    console.log('[fetchArticleBody] Readability returned no content')
+    // Fallback: collect all <p> tags
+    const paragraphs = root.querySelectorAll('p')
+    if (paragraphs.length > 0) {
+      const text = paragraphs.map((p) => p.textContent.trim()).filter(Boolean).join('\n')
+      if (text.length >= 500) {
+        console.log(`[fetchArticleBody] Extracted ${text.length} chars from <p> tags`)
+        return text
+      }
+    }
+
+    console.log('[fetchArticleBody] No sufficient content extracted')
     return ''
   } catch (err) {
     console.error(`[fetchArticleBody] Error fetching ${url}:`, err instanceof Error ? err.message : String(err))
