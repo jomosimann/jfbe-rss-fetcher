@@ -65,6 +65,24 @@ export default function SettingsForm({
         </div>
       </div>
 
+      {/* Lookback days */}
+        <div className="space-y-1">
+          <label htmlFor="lookback_days" className="block text-sm font-medium text-gray-700">
+            Rückblickfenster (Tage)
+          </label>
+          <input
+            id="lookback_days"
+            name="lookback_days"
+            type="number"
+            min={1}
+            max={30}
+            required
+            defaultValue={settings.lookback_days ?? '4'}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <p className="text-xs text-gray-500">Artikel älter als diese Anzahl Tage werden beim Cron-Lauf ignoriert.</p>
+        </div>
+
       {/* Policy areas */}
       <div className="space-y-1">
         <label htmlFor="policy_areas" className="block text-sm font-medium text-gray-700">

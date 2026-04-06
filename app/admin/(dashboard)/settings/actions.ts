@@ -11,6 +11,7 @@ export async function saveSettings(formData: FormData) {
     { key: 'policy_areas', value: formData.get('policy_areas') as string },
     { key: 'relevance_threshold', value: formData.get('relevance_threshold') as string },
     { key: 'actionability_threshold', value: formData.get('actionability_threshold') as string },
+    { key: 'lookback_days', value: formData.get('lookback_days') as string },
   ]
 
   for (const { key, value } of entries) {

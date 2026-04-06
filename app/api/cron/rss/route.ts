@@ -32,7 +32,9 @@ export async function POST(request: NextRequest) {
   const policyAreas = settings.policy_areas ?? ''
   const policyContext = settings.policy_context ?? ''
 
-  console.log('[cron/rss] Thresholds:', { relevanceThreshold, actionabilityThreshold })
+  const lookbackDays = parseInt(settings.lookback_days ?? '4', 10)
+
+  console.log('[cron/rss] Thresholds:', { relevanceThreshold, actionabilityThreshold, lookbackDays })
   console.log('[cron/rss] Policy areas:', policyAreas)
   console.log('[cron/rss] Policy context length:', policyContext.length, 'chars')
 
@@ -85,8 +87,8 @@ export async function POST(request: NextRequest) {
       const allItems = rssFeed.items ?? []
       console.log(`[cron/rss] [${feed.outlet_name}] Parsed ${allItems.length} items from RSS`)
 
-      // --- Lookback window: discard items older than 4 days ---
-      const lookbackMs = 4 * 24 * 60 * 60 * 1000
+      // --- Lookback window: discard items older than N days ---
+      const lookbackMs = lookbackDays * 24 * 60 * 60 * 1000
       const cutoff = new Date(Date.now() - lookbackMs)
       const items = allItems.filter((item) => {
         const pubDate = item.isoDate || item.pubDate
@@ -95,7 +97,7 @@ export async function POST(request: NextRequest) {
       })
       const lookbackDiscarded = allItems.length - items.length
       if (lookbackDiscarded > 0) {
-        console.log(`[cron/rss] [${feed.outlet_name}] Lookback window: discarded ${lookbackDiscarded} items older than 4 days`)
+        console.log(`[cron/rss] [${feed.outlet_name}] Lookback window: discarded ${lookbackDiscarded} items older than ${lookbackDays} days`)
       }
 
       // Collect guids to check which are already seen
