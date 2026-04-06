@@ -11,4 +11,4 @@ jobs:
     steps:
       - name: Trigger RSS processing
         run: |
-          curl -sfL -X POST "${{ secrets.VERCEL_URL }}/api/cron/rss" -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+          curl -sfL -X POST "https://jfbe-rss-fetcher.vercel.app/api/cron/rss" -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
