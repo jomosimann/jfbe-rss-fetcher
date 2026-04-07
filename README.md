@@ -12,7 +12,7 @@ A private tool that monitors Swiss news via RSS feeds, scores each article for p
 | Hosting            | Vercel (free tier)                             |
 | Scheduler          | GitHub Actions (cron)                          |
 | RSS Parsing        | `rss-parser`                                   |
-| Article Extraction | `@mozilla/readability` + `jsdom`               |
+| Article Extraction | `node-html-parser`               |
 | AI Scoring         | Google Gemini 2.5 Flash-Lite                   |
 
 ## Architecture
